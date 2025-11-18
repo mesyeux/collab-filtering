@@ -163,22 +163,65 @@ def prediction_function(user, movie, ratings, similarity_matrix, similarity_thre
 
     return numerator/denominator
 
-def predict_on_test_set(similarity_matrix, ratings_test, ratings_train, threshold, rating_threshold):
+def create_top_k_dict(user_movie_predictions, k):
+    top_k_predictions = {}
+    # Sort each user's list according to ratings 
+    for user in user_movie_predictions:
+        sorted_ratings = sorted(user_movie_predictions[user], key=lambda x: x[1], reverse=True)[:k]
+        top_k_predictions[user] = sorted_ratings
+
+    return top_k_predictions
+
+def compute_precision_recall(top_k_predictions, ratings_test, relevant_threshold):
+    precision_values = []
+    recall_values = []
+    user_relevant_movies = {} # dict: key = user, value = set of relevant movies
+
+    # Filter based on relevant threshold
+    for user in ratings_test:
+        user_relevant_movies[user] = set()
+        for movie in ratings_test[user]:
+            if ratings_test[user][movie] >= relevant_threshold:
+                user_relevant_movies[user].add(movie) # add movie to relevant list if above threshold
+    
+    for user in top_k_predictions:
+        if len(user_relevant_movies[user]) == 0:
+            continue
+
+        if len(top_k_predictions[user]) == 0:
+            continue
+
+        user_top_k_predictions = [x[0] for x in top_k_predictions[user]]
+        top_k_user_set = set(user_top_k_predictions)
+        common_items = top_k_user_set.intersection(user_relevant_movies[user])
+        precision_values.append(len(common_items) / len(top_k_user_set))
+        recall_values.append(len(common_items) / len(user_relevant_movies[user]))
+
+    return np.mean(np.array(precision_values)), np.mean(np.array(recall_values))
+
+def predict_on_test_set(similarity_matrix, ratings_test, ratings_train, threshold, rating_threshold, k, relevant_threshold):
     true_ratings = []
     predicted_ratings = []
+    user_movie_predictions = {} # dict, key = user, value = list of (movieid, prediction)
 
     for user in ratings_test:
+        user_movie_predictions[user] = []
         for movie in ratings_test[user]:
             true_ratings.append(ratings_test[user][movie])
-            predicted_ratings.append(prediction_function(user, movie, ratings_train, similarity_matrix, threshold, rating_threshold))
+            predicted_rating = prediction_function(user, movie, ratings_train, similarity_matrix, threshold, rating_threshold)
+            predicted_ratings.append(predicted_rating)
+            user_movie_predictions[user].append((movie, predicted_rating))
 
     true_ratings = np.array(true_ratings)
     predicted_ratings = np.array(predicted_ratings)
 
+    top_k_predictions = create_top_k_dict(user_movie_predictions, k) 
+    precision, recall = compute_precision_recall(top_k_predictions, ratings_test, relevant_threshold)
+
     mae = np.mean(np.abs(true_ratings - predicted_ratings))
     rmse = np.sqrt(np.mean((true_ratings - predicted_ratings) ** 2))
 
-    return mae, rmse
+    return mae, rmse, precision, recall
 
 def predict_ratings(ratings, movies_user, similarity_matrix, threshold, rating_threshold):
     output = []
@@ -216,8 +259,10 @@ def main():
     ratings_test, movies_user_test = create_ratings_and_movies_user_matrix(test_set)
 
     rating_threshold = 0 # to vary for experiment
+    top_k_value = 5
+    relevant_threshold = 4
 
-    mae, rmse = predict_on_test_set(similarity_matrix_train, ratings_test, ratings_train, threshold, rating_threshold) 
+    mae, rmse, precision, recall = predict_on_test_set(similarity_matrix_train, ratings_test, ratings_train, threshold, rating_threshold, top_k_value, relevant_threshold) 
 
     # Create movie_users and ratings on full dataset 
     ratings, movies_user = create_ratings_and_movies_user_matrix(data)
